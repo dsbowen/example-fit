@@ -8,8 +8,8 @@ weight observation i attaches to example j. Weights are normalized such that
 all 0 < W_ij < 1, and W_i sums to 1 for all i. The more similar observation 
 i and example j, the closer W_ij is to 1. 
 
-The standard use is to fit a linear model (with no intercept) on the weight 
-space.
+The standard use is to fit a general linear model (with no intercept) on the
+weight space.
 
 We interpret ExampleFit as follows: The more similar observation i and 
 example j, the closer the prediction f(x_i) is to Beta_j.
@@ -168,7 +168,8 @@ class ExampleFit():
             self.validating, self.X_train, self.X_test, self.y_train, 
             self.y_test, self.W_train, self.W_test, self.selected_idx,
         )
-        return self.fit(X, y, examples_X, examples_y)
+        self.fit(X, y, examples_X, examples_y)
+        return self._check_examples_score(X, y, max_examples)
 
     def _train_test_split(self, X, y):
         """Split into train and test (validation) data"""
@@ -181,7 +182,8 @@ class ExampleFit():
     def _compute_selected_idx(self):
         """Stepwise selection of example observations"""
         # indices of selected examples from training data
-        self.selected_idx = []
+        # start with the 'modal' observation
+        self.selected_idx = [self.W_train.sum(axis=0).argmax()]
          # indices of candidate examples
         example_idx = list(range(self.W_train.shape[1]))
         # running best score
@@ -218,3 +220,21 @@ class ExampleFit():
         """Select examples from weight matrix and normalize"""
         W = np.take(W, selected_idx, axis=1)
         return W / W.sum(axis=1, keepdims=True)
+
+    def _check_examples_score(self, X, y, max_examples):
+        """Verify score for example points
+
+        Intuively, ExampleFit should perform well when predicting example_X.
+        This method verifies that the score for predicting example_X is higher
+        than the score for predicting the training sample as a whole. If it is
+        not, rerun fit_validate.
+        """
+        examples_score = self.model.score(
+            self.compute_weight(self.examples_X), self.examples_y
+        )
+        train_score = self.model.score(
+            self.compute_weight(X), y
+        )
+        if examples_score < train_score:
+            return self.fit_validate(X, y, max_examples)
+        return self
