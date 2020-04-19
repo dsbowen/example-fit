@@ -27,11 +27,15 @@ class ExampleFit():
     ----------
     model : callable
         The model must have fit, predict, and score methods (see sklearn).
+    example_weight : scalar
+        Weight parameter 
+        beta = example_weight*example_y + (1-example_weight)*beta_estimate.
     alpha : scalar
         Smoothing parameter for computing weights.
     """
-    def __init__(self, model, alpha=1e-6):
+    def __init__(self, model, example_weight=.5, alpha=1e-6):
         self.model = model
+        self.example_weight = example_weight
         self.alpha = alpha
         self.cdist_args, self.cdist_kwargs = [], {}
         self.train_test_split_args, self.train_test_split_kwargs = [], {}
@@ -79,7 +83,12 @@ class ExampleFit():
         Fitted model.
         """
         self.examples_X, self.examples_y = examples_X, examples_y
-        return self.model.fit(self.compute_weight(X), y, *args, **kwargs)
+        self.model.fit(self.compute_weight(X), y, *args, **kwargs)
+        self.model.coef_ = (
+            self.example_weight * examples_y
+            + (1-self.example_weight) * self.model.coef_
+        )
+        return self
 
     def predict(self, X, *args, **kwargs):
         """Predict
@@ -168,8 +177,7 @@ class ExampleFit():
             self.validating, self.X_train, self.X_test, self.y_train, 
             self.y_test, self.W_train, self.W_test, self.selected_idx,
         )
-        self.fit(X, y, examples_X, examples_y)
-        return self._check_examples_score(X, y, max_examples)
+        return self.fit(X, y, examples_X, examples_y)
 
     def _train_test_split(self, X, y):
         """Split into train and test (validation) data"""
@@ -182,8 +190,7 @@ class ExampleFit():
     def _compute_selected_idx(self):
         """Stepwise selection of example observations"""
         # indices of selected examples from training data
-        # start with the 'modal' observation
-        self.selected_idx = [self.W_train.sum(axis=0).argmax()]
+        self.selected_idx = []
          # indices of candidate examples
         example_idx = list(range(self.W_train.shape[1]))
         # running best score
@@ -210,6 +217,10 @@ class ExampleFit():
             # training
             W = self._preprocess(self.W_train, selected_idx)
             model = self.model.fit(W, self.y_train)
+            model.coef_ = (
+                self.example_weight * y
+                + (1-self.example_weight) * model.coef_
+            )
 
             # testing
             W = self._preprocess(self.W_test, selected_idx)
@@ -220,21 +231,3 @@ class ExampleFit():
         """Select examples from weight matrix and normalize"""
         W = np.take(W, selected_idx, axis=1)
         return W / W.sum(axis=1, keepdims=True)
-
-    def _check_examples_score(self, X, y, max_examples):
-        """Verify score for example points
-
-        Intuively, ExampleFit should perform well when predicting example_X.
-        This method verifies that the score for predicting example_X is higher
-        than the score for predicting the training sample as a whole. If it is
-        not, rerun fit_validate.
-        """
-        examples_score = self.model.score(
-            self.compute_weight(self.examples_X), self.examples_y
-        )
-        train_score = self.model.score(
-            self.compute_weight(X), y
-        )
-        if examples_score < train_score:
-            return self.fit_validate(X, y, max_examples)
-        return self
